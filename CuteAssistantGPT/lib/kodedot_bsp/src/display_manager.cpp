@@ -75,8 +75,11 @@ bool DisplayManager::init() {
         LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3
     );
     
+    // NOTE: Arduino_CO5300 constructor updated in newer GFX Library
+    // The boolean parameter (previously for panel flip or similar) was removed
+    // so we now pass only the remaining 9 arguments.
     gfx = new Arduino_CO5300(
-        bus, LCD_RST, 0, false, LCD_WIDTH, LCD_HEIGHT,
+        bus, LCD_RST, 0, LCD_WIDTH, LCD_HEIGHT,
         22, 0, 0, 0
     );
 
@@ -107,7 +110,8 @@ bool DisplayManager::init() {
                      (unsigned)saved_pct, (unsigned)hardware_brightness);
     }
     
-    gfx->fillScreen(BLACK);
+    // Fill with black. 0 is equivalent to RGB565 black (all bits zero).
+    gfx->fillScreen(0);
     Serial.println("Panel initialized");
 
     // Initialize LVGL core

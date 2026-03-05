@@ -127,7 +127,10 @@ static void _on_apb_change(void *arg, apb_change_ev_t ev_type, uint32_t old_apb,
   }
   else
   {
-    _spi->dev->clock.val = spiFrequencyToClockDiv(old_apb / ((_spi->dev->clock.clkdiv_pre + 1) * (_spi->dev->clock.clkcnt_n + 1)));
+    // updated API: first argument is the spi pointer
+    _spi->dev->clock.val = spiFrequencyToClockDiv(
+        _spi,
+        old_apb / ((_spi->dev->clock.clkdiv_pre + 1) * (_spi->dev->clock.clkcnt_n + 1)));
     SPI_MUTEX_UNLOCK();
   }
 }
@@ -174,7 +177,9 @@ bool Arduino_ESP32SPI::begin(int32_t speed, int8_t dataMode)
 
   if (!_div)
   {
-    _div = spiFrequencyToClockDiv(_speed);
+    // ensure _spi is valid before calling the new API
+    _spi = &_spi_bus_array[_spi_num];
+    _div = spiFrequencyToClockDiv(_spi, _speed);
   }
 
   // set pin mode

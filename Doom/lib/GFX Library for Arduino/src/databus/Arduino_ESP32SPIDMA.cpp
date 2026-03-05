@@ -60,7 +60,8 @@ bool Arduino_ESP32SPIDMA::begin(int32_t speed, int8_t dataMode)
 
   if (!_div)
   {
-    _div = spiFrequencyToClockDiv(_speed);
+    // divider is unused for DMA mode; avoid calling updated API
+    _div = 0;
   }
 
   // set pin mode

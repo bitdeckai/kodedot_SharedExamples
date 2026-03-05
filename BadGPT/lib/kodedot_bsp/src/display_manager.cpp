@@ -75,8 +75,10 @@ bool DisplayManager::init() {
         LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3
     );
     
+    // Newer GFX Library constructor takes 9 parameters (rotation, width, height, col/row offsets)
+    // previous versions had an extra 'bool invert' argument which has been removed.
     gfx = new Arduino_CO5300(
-        bus, LCD_RST, 0, false, LCD_WIDTH, LCD_HEIGHT,
+        bus, LCD_RST, 0, LCD_WIDTH, LCD_HEIGHT,
         22, 0, 0, 0
     );
 
@@ -107,7 +109,8 @@ bool DisplayManager::init() {
                      (unsigned)saved_pct, (unsigned)hardware_brightness);
     }
     
-    gfx->fillScreen(BLACK);
+    // use explicit RGB565 color constant provided by Arduino_GFX
+    gfx->fillScreen(RGB565_BLACK);
     Serial.println("Panel initialized");
 
     // Initialize LVGL core
