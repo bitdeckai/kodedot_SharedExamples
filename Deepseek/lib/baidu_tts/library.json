@@ -1,0 +1,8 @@
+{
+  "name": "baidu_tts",
+  "version": "1.0.0",
+  "description": "Baidu text-to-speech client for ESP32",
+  "keywords": "baidu, tts, speech, audio",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}
