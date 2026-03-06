@@ -6,6 +6,12 @@
 
 #if defined(ESP32) && (CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3)
 
+#if (ESP_ARDUINO_VERSION_MAJOR >= 3)
+#define GFX_SPI_FREQUENCY_TO_CLOCK_DIV(_spi, _freq) spiFrequencyToClockDiv((_spi), (_freq))
+#else
+#define GFX_SPI_FREQUENCY_TO_CLOCK_DIV(_spi, _freq) spiFrequencyToClockDiv((_freq))
+#endif
+
 struct spi_struct_t
 {
   spi_dev_t *dev;
@@ -127,7 +133,7 @@ static void _on_apb_change(void *arg, apb_change_ev_t ev_type, uint32_t old_apb,
   }
   else
   {
-    _spi->dev->clock.val = spiFrequencyToClockDiv(old_apb / ((_spi->dev->clock.clkdiv_pre + 1) * (_spi->dev->clock.clkcnt_n + 1)));
+    _spi->dev->clock.val = GFX_SPI_FREQUENCY_TO_CLOCK_DIV(_spi, old_apb / ((_spi->dev->clock.clkdiv_pre + 1) * (_spi->dev->clock.clkcnt_n + 1)));
     SPI_MUTEX_UNLOCK();
   }
 }
@@ -174,7 +180,7 @@ bool Arduino_ESP32SPI::begin(int32_t speed, int8_t dataMode)
 
   if (!_div)
   {
-    _div = spiFrequencyToClockDiv(_speed);
+    _div = GFX_SPI_FREQUENCY_TO_CLOCK_DIV(nullptr, _speed);
   }
 
   // set pin mode

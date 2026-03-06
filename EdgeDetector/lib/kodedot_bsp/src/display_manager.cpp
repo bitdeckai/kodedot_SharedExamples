@@ -75,8 +75,12 @@ bool DisplayManager::init() {
         LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3
     );
     
+    // The CO5300 constructor takes 9 parameters: bus, reset pin,
+    // initial rotation, width, height, and x/y offsets for two addresses.
+    // Earlier versions of the library used a boolean here, which is no
+    // longer present, so we drop the extra argument.
     gfx = new Arduino_CO5300(
-        bus, LCD_RST, 0, false, LCD_WIDTH, LCD_HEIGHT,
+        bus, LCD_RST, 0, LCD_WIDTH, LCD_HEIGHT,
         22, 0, 0, 0
     );
 
@@ -94,7 +98,10 @@ bool DisplayManager::init() {
         gfx->setBrightness(saved_brightness);
         Serial.printf("Brightness (pct=%u) applied from NVS\n", (unsigned)saved_pct);
     }
-    gfx->fillScreen(BLACK);
+    // use the library-defined RGB565 color macro rather than an undefined
+    // symbol.  "BLACK" isn't defined by Arduino_GFX; the correct constant
+    // is RGB565_BLACK.
+    gfx->fillScreen(RGB565_BLACK);
     Serial.println("Panel initialized");
 
     // Initialize LVGL core
