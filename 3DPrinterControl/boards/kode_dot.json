@@ -2,7 +2,7 @@
   "build": {
     "arduino":{
       "ldscript": "esp32s3_out.ld",
-      "partitions": "partitions_app.csv",
+      "partitions": "partitions_app_new.csv",
       "memory_type": "qio_opi"
     },
     "core": "esp32",
