@@ -160,6 +160,7 @@ private:
 
 // External font references
 extern const lv_font_t Inter_30;
+extern const lv_font_t ui_font_NotoSansSC_32_cjk;
 extern const lv_font_t ui_font_Chill7;
 
 #endif // UI_MANAGER_H

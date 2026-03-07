@@ -93,6 +93,16 @@ void copyUtf8Safely(char* dest, size_t capacity, const char* src) {
     dest[written] = '\0';
 }
 
+size_t utf8CodePointCount(const String& text) {
+    size_t count = 0;
+    size_t idx = 0;
+    while (idx < text.length()) {
+        idx = utf8NextBoundary(text, idx);
+        ++count;
+    }
+    return count;
+}
+
 }
 
 // External LVGL images
@@ -107,7 +117,31 @@ extern "C" {
 const lv_color_t UIManager::KODE_BG_DARK = lv_color_hex(0x000000);
 const lv_color_t UIManager::KODE_TEXT_LIGHT = lv_color_hex(0xFFFAF5);
 
-static const lv_font_t* kResponseFont = &ui_font_Chill7;
+static lv_font_t gResponseFont32;
+static bool gResponseFontInitialized = false;
+
+static void initResponseFonts() {
+    if (!gResponseFontInitialized) {
+        gResponseFont32 = ui_font_NotoSansSC_32_cjk;
+        gResponseFont32.fallback = &ui_font_Chill7;
+
+        gResponseFontInitialized = true;
+    }
+}
+
+static const lv_font_t* getResponseFont32() {
+    initResponseFonts();
+    return &gResponseFont32;
+}
+
+static const lv_font_t* pickResponseFontForText(const String& text) {
+    (void)text;
+    return getResponseFont32();
+}
+
+static const lv_font_t* getResponseFontDefault() {
+    return getResponseFont32();
+}
 
 UIManager::UIManager() 
     : stateImage_(nullptr)
@@ -134,7 +168,7 @@ UIManager::UIManager()
     , pendingText_("")
     , currentCharIndex_(0)
     , isTypewriting_(false)
-    , typewriterDelayMs_(40)
+    , typewriterDelayMs_(18)
     , typewriterFinishedTime_(0)
     , thinkingTimer_(nullptr)
     , nextThinkingMoveTime_(0)
@@ -344,7 +378,9 @@ void UIManager::setupStyles() {
     lv_style_init(&styleTextArea_);
     lv_style_set_bg_opa(&styleTextArea_, LV_OPA_TRANSP);
     lv_style_set_text_color(&styleTextArea_, KODE_TEXT_LIGHT);
-    lv_style_set_text_font(&styleTextArea_, kResponseFont);
+    lv_style_set_text_font(&styleTextArea_, getResponseFontDefault());
+    lv_style_set_text_line_space(&styleTextArea_, 8);
+    lv_style_set_text_letter_space(&styleTextArea_, 1);
     
     // Status badge style
     lv_style_init(&styleStatus_);
@@ -495,66 +531,13 @@ void UIManager::updateStatusBadge(UIState state) {
 }
 
 void UIManager::centerResponseText() {
-    if (!responseTextArea_) return; // kept for compatibility if used elsewhere
-    
-    const char* currentText = lv_label_get_text(responseTextArea_);
-    if (currentText && strlen(currentText) > 0) {
-        // Remove cursor character if present for centering calculation
-        String textForCentering = String(currentText);
-        if (textForCentering.endsWith("|")) {
-            textForCentering = textForCentering.substring(0, textForCentering.length() - 1);
-        }
+    if (!responseTextArea_) return;
 
-        // Fetch current style values used for measuring and centering
-        lv_coord_t pad_left   = lv_obj_get_style_pad_left(responseTextArea_, LV_PART_MAIN);
-        lv_coord_t pad_right  = lv_obj_get_style_pad_right(responseTextArea_, LV_PART_MAIN);
-        lv_coord_t pad_top_min    = lv_obj_get_style_pad_top(responseTextArea_, LV_PART_MAIN);
-        lv_coord_t pad_bottom = lv_obj_get_style_pad_bottom(responseTextArea_, LV_PART_MAIN);
-        lv_coord_t lineSpacing = lv_obj_get_style_text_line_space(responseTextArea_, LV_PART_MAIN);
-        lv_coord_t letterSpace = lv_obj_get_style_text_letter_space(responseTextArea_, LV_PART_MAIN);
-
-        // Compute the maximum text width inside the label (account for paddings)
-        lv_coord_t containerWidth = lv_obj_get_width(responseTextArea_);
-        lv_coord_t max_text_w = containerWidth - pad_left - pad_right;
-        if (max_text_w < 10) max_text_w = containerWidth; // Fallback safety
-
-        // Measure rendered text block size with LVGL's text engine (accounts for wrapping)
-    lv_point_t txt_size;
-    lv_text_flag_t flags = LV_TEXT_FLAG_NONE;
-        lv_txt_get_size(&txt_size,
-                        textForCentering.c_str(),
-                        kResponseFont,
-                        letterSpace,
-                        lineSpacing,
-                        max_text_w,
-                        flags);
-
-    // Calculate vertical centering based on measured text height
-    lv_coord_t containerHeight = lv_obj_get_height(responseTextArea_);
-    lv_coord_t verticalSpace = containerHeight - txt_size.y;
-    lv_coord_t symmetricPad = verticalSpace / 2; // equal top & bottom for perfect centering
-
-    // Clamp to reasonable bounds (avoid negative). Keep at least 4px when overflowing
-    if (symmetricPad < 0) symmetricPad = 4;
-
-    // Apply symmetric padding for true vertical centering
-    lv_obj_set_style_pad_top(responseTextArea_, symmetricPad, LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(responseTextArea_, symmetricPad, LV_PART_MAIN);
-
-        // Ensure horizontal centering remains
-        lv_obj_set_style_text_align(responseTextArea_, LV_TEXT_ALIGN_CENTER, 0);
-
-        // Handle opacity: no fade during typewriter
-        if (!isTypewriting_) {
-            lv_obj_set_style_text_opa(responseTextArea_, LV_OPA_COVER, 0);
-        } else {
-            lv_obj_set_style_text_opa(responseTextArea_, LV_OPA_COVER, 0);
-        }
-    } else {
-        // Reset to default padding when no text
-        lv_obj_set_style_pad_top(responseTextArea_, 15, LV_PART_MAIN);
-        lv_obj_set_style_text_opa(responseTextArea_, LV_OPA_COVER, 0);
-    }
+    // Keep content left-aligned, but place the text box in a safer center area.
+    lv_obj_set_style_text_align(responseTextArea_, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(responseTextArea_, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(responseTextArea_, 12, LV_PART_MAIN);
+    lv_obj_set_style_text_opa(responseTextArea_, LV_OPA_COVER, LV_PART_MAIN);
 }
 
 lv_color_t UIManager::getStateColor(UIState state) {
@@ -641,12 +624,22 @@ void UIManager::createEyes() {
 void UIManager::createTextDisplay() {
     lv_obj_t* scr = lv_scr_act();
     
-    // Response text area - centered, word wrap enabled
+    // Response text area - centered safe region to avoid rounded-corner clipping
+    const lv_coord_t safeMargin = 28;
     responseTextArea_ = lv_label_create(scr);
-    lv_obj_set_size(responseTextArea_, LV_HOR_RES - 40, LV_VER_RES - 100);
+    lv_obj_set_size(responseTextArea_, LV_HOR_RES - (safeMargin * 2), LV_VER_RES - (safeMargin * 2));
     lv_obj_add_style(responseTextArea_, &styleTextArea_, 0);
     lv_label_set_long_mode(responseTextArea_, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_align(responseTextArea_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(responseTextArea_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_pad_left(responseTextArea_, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(responseTextArea_, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(responseTextArea_, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(responseTextArea_, 12, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(responseTextArea_, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(responseTextArea_, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(responseTextArea_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(responseTextArea_, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_add_flag(responseTextArea_, LV_OBJ_FLAG_SCROLL_ELASTIC);
     lv_obj_center(responseTextArea_);
     lv_obj_add_flag(responseTextArea_, LV_OBJ_FLAG_HIDDEN); // Hidden by default
 }
@@ -886,6 +879,9 @@ void UIManager::startTypewriterAnimation(const char* text) {
     
     // Setup typewriter animation
     pendingText_ = String(text);
+    const lv_font_t* selectedFont = pickResponseFontForText(pendingText_);
+    lv_obj_set_style_text_font(responseTextArea_, selectedFont, LV_PART_MAIN);
+    lv_obj_scroll_to_y(responseTextArea_, 0, LV_ANIM_OFF);
     currentCharIndex_ = 0;
     isTypewriting_ = true;
     
@@ -956,9 +952,9 @@ void UIManager::updateTypewriterText() {
     uint32_t nextDelay = typewriterDelayMs_;
     
     if (isLongPauseCodePoint(currentCodePoint)) {
-        nextDelay = typewriterDelayMs_ * 8; // Pause longer after sentences
+        nextDelay = typewriterDelayMs_ * 3; // Short pause after sentence endings
     } else if (isMediumPauseCodePoint(currentCodePoint)) {
-        nextDelay = typewriterDelayMs_ * 4; // Medium pause after commas
+        nextDelay = typewriterDelayMs_ * 2; // Medium-short pause after commas
     } else if (isSpaceCodePoint(currentCodePoint)) {
         nextDelay = typewriterDelayMs_ / 2; // Faster through spaces
     }

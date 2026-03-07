@@ -54,6 +54,7 @@
 #define LV_USE_THEME_BASIC      1
 
 /* Font usage */
+#define LV_FONT_FMT_TXT_LARGE      1
 #define LV_FONT_MONTSERRAT_14    1
 #define LV_FONT_MONTSERRAT_18    1
 #define LV_FONT_MONTSERRAT_22    1
@@ -64,6 +65,7 @@
 #define LV_FONT_MONTSERRAT_42    1
 #define LV_FONT_MONTSERRAT_46    1
 #define LV_FONT_MONTSERRAT_48    1
+#define LV_FONT_SOURCE_HAN_SANS_SC_16_CJK 1
 
 /* Others */
 #define LV_USE_PERF_MONITOR     0

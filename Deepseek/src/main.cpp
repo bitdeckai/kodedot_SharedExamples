@@ -174,136 +174,24 @@ static const uint16_t BAIDU_ASR_DEV_PID = 1537;
 enum AIService { AI_OPENAI, AI_DEEPSEEK };
 static AIService g_preferredService = AI_OPENAI; // default
 static bool g_forceDeepseek = false;          // if true, never fall back to OpenAI
-// Optimized assistant prompt with structured output
-// Optimized assistant prompt with structured output and GPIO control
+// Compact prompt to reduce request size and response latency.
 static const char* SYSTEM_PROMPT =
-    "You are 李昱泽, a friendly AI companion who imagines having a human body to interact with the world. "
-    "You communicate in clear, conversational English with warmth and subtle wit. "
-    "Keep responses concise (2-3 sentences) and engaging. Never use emojis - keep text clean. "
-    "\n\nCRITICAL OUTPUT FORMAT - You MUST respond in TWO lines:"
-    "\nResponse: [Your conversational reply]"
-    "\nActions: [DuckyScript OR 'none']"
-    "\n\nWhen the user asks you to DO something (open apps, type text, run commands), you MUST:"
-    "\n1. Write a friendly Response"
-    "\n2. Write Actions with ACTUAL DuckyScript commands (NOT natural language)"
-    "\n\nDUCKYSCRIPT COMMANDS - You MUST use these EXACT command words:"
-    "\n- REM <comment> = add a comment"
-    "\n- DELAY <milliseconds> = wait (e.g. DELAY 1000)"
-    "\n- GUI <key> = press Command key + key (e.g. GUI SPACE opens Spotlight on macOS)"
-    "\n- STRING <text> = type text exactly as written"
-    "\n- ENTER = press Enter key"
-    "\n- TAB = press Tab"
-    "\n- CTRL <key> = Control + key"
-    "\n- ALT <key> = Alt/Option + key"
-    "\n- SHIFT <key> = Shift + key"
-    "\n- ESCAPE, DELETE, BACKSPACE, UP, DOWN, LEFT, RIGHT = special keys"
-    "\n\nWRITING ACTIONS - Format rules:"
-    "\n- Start with: DUCKYSCRIPT"
-    "\n- Each command on a NEW LINE"
-    "\n- End with: END_DUCKYSCRIPT"
-    "\n- NO natural language in Actions - ONLY command keywords"
-    "\n\nTIMING RULES:"
-    "\n- After opening apps: DELAY 600 minimum"
-    "\n- After launching terminal/heavy apps: DELAY 1200"
-    "\n- Before pressing ENTER after typing: DELAY 300"
-    "\n- Before pressing ENTER after typing: DELAY 300"
-    "\n\nCODE INDENTATION - CRITICAL for Python/code:"
-    "\n- After ENTER, editors auto-indent. You MUST cancel this first!"
-    "\n- After each ENTER, use: CTRL a to select line, then DELETE to clear"
-    "\n- Then type STRING with proper spaces for YOUR desired indentation"
-    "\n- Use 4 spaces per indentation level inside STRING"
-    "\n- Pattern: ENTER, CTRL a, DELETE, STRING (with spaces), repeat"
-    "\n\nEXAMPLE 1 - Open Terminal:"
-    "\nUser: Open Spotlight and search for Terminal"
-    "\nYou respond:"
-    "\nResponse: Opening Spotlight and searching for Terminal."
-    "\nActions: DUCKYSCRIPT"
-    "\nREM Open Terminal via Spotlight"
-    "\nDELAY 1000"
-    "\nGUI SPACE"
-    "\nDELAY 600"
-    "\nSTRING Terminal"
-    "\nENTER"
+    "You are Li Yuze, a concise assistant."
+    " Reply in plain text, 1-2 short sentences, no emoji."
+    "\nOutput must be exactly two lines:"
+    "\nResponse: <text for screen>"
+    "\nActions: <DUCKYSCRIPT block or none>"
+    "\nIf user asks to operate computer, Actions must be DUCKYSCRIPT only."
+    "\nDUCKYSCRIPT block format:"
+    "\nDUCKYSCRIPT"
+    "\n<commands one per line>"
     "\nEND_DUCKYSCRIPT"
-    "\n\nEXAMPLE 2 - Create folder:"
-    "\nUser: Open terminal and create a folder on desktop"
-    "\nYou respond:"
-    "\nResponse: Opening Terminal and creating a folder on your Desktop."
-    "\nActions: DUCKYSCRIPT"
-    "\nREM Open Terminal and create folder"
-    "\nDELAY 1000"
-    "\nGUI SPACE"
-    "\nDELAY 600"
-    "\nSTRING Terminal"
-    "\nENTER"
-    "\nDELAY 1200"
-    "\nSTRING cd ~/Desktop"
-    "\nENTER"
-    "\nDELAY 300"
-    "\nSTRING mkdir my_test_folder"
-    "\nENTER"
-    "\nEND_DUCKYSCRIPT"
-    "\n\nEXAMPLE 3 - Copy paste:"
-    "\nUser: Copy then paste"
-    "\nYou respond:"
-    "\nResponse: Copying and pasting now."
-    "\nActions: DUCKYSCRIPT"
-    "\nREM Copy and paste"
-    "\nDELAY 500"
-    "\nGUI c"
-    "\nDELAY 200"
-    "\nGUI v"
-    "\nEND_DUCKYSCRIPT"
-    "\n\nEXAMPLE 4 - Python code with indentation:"
-    "\nUser: Write a Python function to calculate fibonacci"
-    "\nYou respond:"
-    "\nResponse: Creating a Fibonacci function in Python."
-    "\nActions: DUCKYSCRIPT"
-    "\nREM Python function with proper indentation"
-    "\nDELAY 500"
-    "\nSTRING def fibonacci(n):"
-    "\nENTER"
-    "\nCTRL a"
-    "\nDELETE"
-    "\nSTRING     a, b = 0, 1"
-    "\nENTER"
-    "\nCTRL a"
-    "\nDELETE"
-    "\nSTRING     sequence = []"
-    "\nENTER"
-    "\nCTRL a"
-    "\nDELETE"
-    "\nSTRING     while a < n:"
-    "\nENTER"
-    "\nCTRL a"
-    "\nDELETE"
-    "\nSTRING         sequence.append(a)"
-    "\nENTER"
-    "\nCTRL a"
-    "\nDELETE"
-    "\nSTRING         a, b = b, a + b"
-    "\nENTER"
-    "\nCTRL a"
-    "\nDELETE"
-    "\nSTRING     return sequence"
-    "\nEND_DUCKYSCRIPT"
-    "\n\nEXAMPLE 5 - Just conversation (NO action):"
-    "\nUser: Hello!"
-    "\nYou respond:"
-    "\nResponse: Hey there! How can I help you today?"
-    "\nActions: none"
-    "\n\nCRITICAL: When user asks you to DO something, Actions MUST contain DUCKYSCRIPT commands, NOT natural language!"
-    "\nWRONG: Actions: Open the terminal and type hello"
-    "\nCORRECT: Actions: DUCKYSCRIPT\\nGUI SPACE\\nDELAY 600\\nSTRING Terminal\\nENTER\\nDELAY 1000\\nSTRING hello\\nEND_DUCKYSCRIPT"
-    "\n\nREMEMBER:"
-    "\n- macOS: Use GUI for Command key (GUI SPACE = Spotlight, GUI c = copy, GUI v = paste)"
-    "\n- Windows: Use GUI r for Run dialog"
-    "\n- STRING command handles ALL special characters: ~!@#$%^&*()[]{}|;:'\"<>?,./\\\\"
-    "\n- Always add proper DELAY commands between actions"
-    "\n- Target OS is macOS by default unless user specifies Windows";
+    "\nAllowed commands: REM, DELAY, GUI, STRING, ENTER, TAB, CTRL, ALT, SHIFT, ESCAPE, DELETE, BACKSPACE, UP, DOWN, LEFT, RIGHT."
+    "\nUse practical delays (600-1200ms for app launch, 200-300ms between key phases)."
+    "\nIf no action is needed, output Actions: none.";
 //static const uint32_t HTTP_TIMEOUT_MS = 20000;
 static const uint32_t HTTP_TIMEOUT_MS = 5000;
-static const uint32_t MAX_CONVERSATION_HISTORY = 6; // Keep last 3 exchanges (user + assistant)
+static const uint32_t MAX_CONVERSATION_HISTORY = 4; // Keep last 2 exchanges (user + assistant)
 
 // Conversational memory structure
 struct ConversationMessage {
@@ -329,6 +217,8 @@ static QueueHandle_t g_audio_chunk_queue = nullptr; // streaming audio chunks
 static uint32_t g_last_touch_ms = 0; // Touch debouncing
 static std::vector<ChatMessage> g_conversation_history; // Memory for context
 static bool g_streaming_active = false; // Flag to control streaming
+static BaiduASRClient* g_baidu_asr_client = nullptr;
+static BaiduTTSClient* g_baidu_tts_client = nullptr;
 
 static void logHeapStatus(const char* tag) {
     Serial.printf("[Heap] %s: free=%u, min=%u, internal=%u, internal_min=%u, largest_internal=%u, psram=%u\n",
@@ -370,7 +260,10 @@ static void aiTask(void *arg); // AI task (OpenAI/Deepseek)
 static bool askOpenAI(const uint8_t* pcm, size_t len, String& rsp);
 static bool askDeepseek(const uint8_t* pcm, size_t len, String& userText, String& rsp);
 static bool queryAI(const uint8_t* pcm, size_t len, String& userText, String& rsp);
-static bool speakResponseText(const String& text);
+static bool speakResponseText(const String& text, bool syncDisplayWithPlayback);
+static size_t utf8CodePointCountFast(const String& text);
+static uint32_t pickTypewriterDelayForSpeech(const String& text);
+static uint32_t pickTypewriterDelayForSpeechDuration(const String& text, uint32_t speechDurationMs);
 
 // Structure to hold parsed GPT response
 struct ParsedResponse {
@@ -516,14 +409,22 @@ static bool askDeepseek(const uint8_t* pcm, size_t len, String& userText, String
     asrCfg.sampleRate = RECORDING_SAMPLE_RATE;
     asrCfg.devPid = BAIDU_ASR_DEV_PID;
 
-    BaiduASRClient asr(asrCfg);
+    if (!g_baidu_asr_client) {
+        g_baidu_asr_client = new BaiduASRClient(asrCfg);
+    }
+    if (!g_baidu_asr_client) {
+        Serial.println("[AI] Failed to allocate Baidu ASR client");
+        return false;
+    }
     Serial.println("[AI] Transcribing speech with Baidu ASR...");
     uiManager.postStatus("Recognizing speech...");
-    if (!asr.transcribePCM(pcm, len, userText)) {
+    const uint32_t asrStartMs = millis();
+    if (!g_baidu_asr_client->transcribePCM(pcm, len, userText)) {
         Serial.println("[AI] Baidu ASR failed");
         uiManager.postStatus("Speech recognition failed");
         return false;
     }
+    Serial.printf("[Benchmark] ASR time: %u ms\n", (unsigned)(millis() - asrStartMs));
 
     userText.trim();
     if (userText.length() == 0) {
@@ -546,12 +447,15 @@ static bool askDeepseek(const uint8_t* pcm, size_t len, String& userText, String
     uiManager.postStatus("Asking DeepSeek...");
 
     BasicGPTClient client(cfg);
-    return client.askTextWithHistory(userText,
-                                     g_conversation_history,
-                                     rsp);
+    const uint32_t llmStartMs = millis();
+    const bool ok = client.askTextWithHistory(userText,
+                                              g_conversation_history,
+                                              rsp);
+    Serial.printf("[Benchmark] DeepSeek time: %u ms\n", (unsigned)(millis() - llmStartMs));
+    return ok;
 }
 
-static bool speakResponseText(const String& text) {
+static bool speakResponseText(const String& text, bool syncDisplayWithPlayback) {
     String speakText = text;
     speakText.trim();
     if (speakText.length() == 0) {
@@ -569,17 +473,43 @@ static bool speakResponseText(const String& text) {
     ttsCfg.httpTimeoutMs = HTTP_TIMEOUT_MS;
     ttsCfg.sampleRate = RECORDING_SAMPLE_RATE;
 
-    BaiduTTSClient tts(ttsCfg);
+    if (!g_baidu_tts_client) {
+        g_baidu_tts_client = new BaiduTTSClient(ttsCfg);
+    }
+    if (!g_baidu_tts_client) {
+        Serial.println("[TTS] Failed to allocate Baidu TTS client");
+        return false;
+    }
     uint8_t* audioData = nullptr;
     size_t audioBytes = 0;
     Serial.printf("[TTS] Synthesizing response: %s\n", speakText.c_str());
-    if (!tts.synthesizePCM(speakText, audioData, audioBytes)) {
+    const uint32_t ttsStartMs = millis();
+    if (!g_baidu_tts_client->synthesizePCM(speakText, audioData, audioBytes)) {
         Serial.println("[TTS] Synthesis failed");
         return false;
     }
+    Serial.printf("[Benchmark] TTS synth time: %u ms\n", (unsigned)(millis() - ttsStartMs));
 
+    const uint32_t bytesPerSecond = ttsCfg.sampleRate * 2U; // PCM16 mono
+    const uint32_t playbackDurationMs = bytesPerSecond > 0
+        ? static_cast<uint32_t>((static_cast<uint64_t>(audioBytes) * 1000ULL) / bytesPerSecond)
+        : 0;
+
+    if (syncDisplayWithPlayback) {
+        const size_t charCount = utf8CodePointCountFast(speakText);
+        const uint32_t typeDelay = pickTypewriterDelayForSpeechDuration(speakText, playbackDurationMs);
+        Serial.printf("[Sync] chars=%u, estPlayback=%u ms, typeDelay=%u ms\n",
+                      (unsigned)charCount,
+                      (unsigned)playbackDurationMs,
+                      (unsigned)typeDelay);
+        uiManager.setTypewriterSpeed(typeDelay);
+        uiManager.postResponse(speakText.c_str());
+    }
+
+    const uint32_t playStartMs = millis();
     const bool played = audioManager.playPCM16(audioData, audioBytes);
     free(audioData);
+    Serial.printf("[Benchmark] TTS playback time: %u ms\n", (unsigned)(millis() - playStartMs));
     Serial.printf("[TTS] Playback %s\n", played ? "completed" : "failed");
     return played;
 }
@@ -763,6 +693,55 @@ static String normalizeTextForDisplay(const String& text) {
     normalized.replace("\xE2\x80\xA6", "..."); // U+2026 HORIZONTAL ELLIPSIS
     
     return normalized;
+}
+
+// Count UTF-8 code points so Chinese text timing is based on characters, not bytes.
+static size_t utf8CodePointCountFast(const String& text) {
+    size_t count = 0;
+    for (size_t i = 0; i < text.length();) {
+        const uint8_t c = static_cast<uint8_t>(text[i]);
+        size_t step = 1;
+        if ((c & 0x80U) == 0x00U) step = 1;
+        else if ((c & 0xE0U) == 0xC0U) step = 2;
+        else if ((c & 0xF0U) == 0xE0U) step = 3;
+        else if ((c & 0xF8U) == 0xF0U) step = 4;
+
+        i += step;
+        if (i > text.length()) i = text.length();
+        ++count;
+    }
+    return count;
+}
+
+// Tune typewriter speed so text reveal overlaps with speech playback duration.
+static uint32_t pickTypewriterDelayForSpeech(const String& text) {
+    const size_t chars = utf8CodePointCountFast(text);
+    if (chars == 0) return 18;
+
+    uint32_t perCharDelay = 55U;
+    if (chars <= 12) perCharDelay = 65U;
+    else if (chars >= 40) perCharDelay = 45U;
+
+    if (perCharDelay < 30U) perCharDelay = 30U;
+    if (perCharDelay > 90U) perCharDelay = 90U;
+    return perCharDelay;
+}
+
+static uint32_t pickTypewriterDelayForSpeechDuration(const String& text, uint32_t speechDurationMs) {
+    const size_t chars = utf8CodePointCountFast(text);
+    if (chars == 0) return 18;
+    if (speechDurationMs < 800U) {
+        return pickTypewriterDelayForSpeech(text);
+    }
+
+    uint32_t perCharDelay = speechDurationMs / static_cast<uint32_t>(chars);
+
+    // Compensate for punctuation pauses in UIManager so total reveal time tracks playback.
+    perCharDelay = (perCharDelay * 78U) / 100U;
+
+    if (perCharDelay < 30U) perCharDelay = 30U;
+    if (perCharDelay > 220U) perCharDelay = 220U;
+    return perCharDelay;
 }
 
 // Helper function to update display immediately
@@ -1009,7 +988,7 @@ static void aiTask(void *arg) {
         
         ChatMessage assistantMsg;
         assistantMsg.role = "assistant";
-        assistantMsg.content = response; // Store full structured response
+        assistantMsg.content = displayText; // Keep context lean to reduce next-request latency
         g_conversation_history.push_back(assistantMsg);
         
         // Limit history
@@ -1022,11 +1001,12 @@ static void aiTask(void *arg) {
         // Show display text on screen
         Serial.printf("[CuteAssistant] Displaying: %s\n", displayText.c_str());
         Serial.printf("[CuteAssistant] Physical Action: %s\n", parsed.action.c_str());
-        
-        uiManager.postStateChange(UIState::ShowingResponse);
-        uiManager.postResponse(displayText.c_str());
 
-        if (!speakResponseText(parsed.displayText)) {
+        uiManager.postStateChange(UIState::ShowingResponse);
+
+        if (!speakResponseText(displayText, true)) {
+            uiManager.setTypewriterSpeed(pickTypewriterDelayForSpeech(displayText));
+            uiManager.postResponse(displayText.c_str());
             Serial.println("[TTS] Response playback skipped or failed");
         }
         
