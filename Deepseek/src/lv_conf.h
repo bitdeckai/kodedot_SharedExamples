@@ -64,7 +64,6 @@
 #define LV_FONT_MONTSERRAT_42    1
 #define LV_FONT_MONTSERRAT_46    1
 #define LV_FONT_MONTSERRAT_48    1
-#define LV_FONT_SOURCE_HAN_SANS_SC_16_CJK 1
 
 /* Others */
 #define LV_USE_PERF_MONITOR     0

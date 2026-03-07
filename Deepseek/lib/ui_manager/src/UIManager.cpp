@@ -107,7 +107,7 @@ extern "C" {
 const lv_color_t UIManager::KODE_BG_DARK = lv_color_hex(0x000000);
 const lv_color_t UIManager::KODE_TEXT_LIGHT = lv_color_hex(0xFFFAF5);
 
-static const lv_font_t* kResponseFont = &lv_font_source_han_sans_sc_16_cjk;
+static const lv_font_t* kResponseFont = &ui_font_Chill7;
 
 UIManager::UIManager() 
     : stateImage_(nullptr)
@@ -355,7 +355,7 @@ void UIManager::setupStyles() {
     lv_style_set_pad_left(&styleStatus_, 10);
     lv_style_set_pad_right(&styleStatus_, 10);
     lv_style_set_border_width(&styleStatus_, 0);
-    lv_style_set_text_font(&styleStatus_, kResponseFont);
+    lv_style_set_text_font(&styleStatus_, &Inter_30);
     
         // Eye style - will be updated dynamically based on state
     // Default: Orange (Ready state)

@@ -8,6 +8,8 @@
  * - GPIO control via voice commands
  */
 #include <Arduino.h>
+#include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <kodedot/display_manager.h>
 #include <kodedot/pin_config.h>
 #include <WiFi.h>
@@ -21,8 +23,11 @@
 #include <Wire.h>
 #include <PMIC_BQ25896.h>
 // DuckyScript for keyboard actions (BadUSB style)
-#ifdef USE_USB_KEYBOARD_ACTIONS
+#if defined(USE_USB_KEYBOARD_ACTIONS) && defined(CONFIG_TINYUSB_ENABLED) && defined(ARDUINO_USB_MODE) && (ARDUINO_USB_MODE == 1)
 #include <DuckyScript.h>
+#define USB_KEYBOARD_AVAILABLE 1
+#else
+#define USB_KEYBOARD_AVAILABLE 0
 #endif
 
 // ==================== API SELECTION ====================
@@ -53,7 +58,7 @@ AudioManager audioManager;
 UIManager uiManager;
 LEDManager ledManager;
 PMIC_BQ25896 pmic;
-#ifdef USE_USB_KEYBOARD_ACTIONS
+#if USB_KEYBOARD_AVAILABLE
 static DuckyScript ducky; // DuckyScript instance
 enum OSType { OS_UNKNOWN = 0, OS_WINDOWS, OS_MAC };
 static OSType current_os = OS_MAC; // Default to macOS
@@ -63,6 +68,7 @@ static OSType current_os = OS_MAC; // Default to macOS
 static const uint32_t GUI_LOOP_DELAY_MS = 5;
 static const uint32_t WIFI_CHECK_INTERVAL_MS = 15000;
 static const uint32_t TOUCH_DEBOUNCE_MS = 200;    // Prevent rapid touches
+static const bool PMIC_ENABLE_OTG_ON_BOOT = false;
 
 // Available GPIO pins for user control (from pinout diagram)
 static const int AVAILABLE_GPIOS[] = {1, 2, 3, 11, 12, 13, 39, 40, 41, 42};
@@ -80,6 +86,22 @@ static void initPMIC() {
     // Habilitar conversión continua de ADC (1 Hz) para refrescar medidas
     pmic.setCONV_RATE(true);
     delay(50);
+
+    auto vstat = pmic.get_VBUS_STAT_reg();
+    bool haveUsb = vstat.pg_stat;
+    Serial.printf("[PMIC] Estado inicial VBUS: USB=%s, carga=%d\n", haveUsb ? "conectado" : "no conectado", vstat.chrg_stat);
+
+    if (!PMIC_ENABLE_OTG_ON_BOOT) {
+        pmic.setOTG_CONFIG(false);
+        Serial.println("[PMIC] OTG/Boost deshabilitado en arranque para evitar reinicios durante USB debug");
+        return;
+    }
+
+    if (haveUsb) {
+        pmic.setOTG_CONFIG(false);
+        Serial.println("[PMIC] USB/VBUS detectado; se omite OTG/Boost para no interferir con la conexion USB");
+        return;
+    }
     
     // CONFIGURAR BOOST VOLTAGE (5V típico)
     // El registro BOOSTV controla el voltaje de salida del boost
@@ -92,9 +114,9 @@ static void initPMIC() {
     delay(100);  // Dar tiempo para que se estabilice
     
     // Verificar estado
-    auto vstat = pmic.get_VBUS_STAT_reg();
-    bool haveUsb = vstat.pg_stat;  // Power Good on VBUS
-    
+    vstat = pmic.get_VBUS_STAT_reg();
+    haveUsb = vstat.pg_stat;  // Power Good on VBUS
+
     Serial.printf("[PMIC] USB=%s, Estado carga=%d\n", haveUsb ? "conectado" : "no conectado", vstat.chrg_stat);
     Serial.println("[PMIC] ✅ Bus de 5V HABILITADO - Modo OTG/Boost activado");
 }
@@ -307,6 +329,39 @@ static QueueHandle_t g_audio_chunk_queue = nullptr; // streaming audio chunks
 static uint32_t g_last_touch_ms = 0; // Touch debouncing
 static std::vector<ChatMessage> g_conversation_history; // Memory for context
 static bool g_streaming_active = false; // Flag to control streaming
+
+static void logHeapStatus(const char* tag) {
+    Serial.printf("[Heap] %s: free=%u, min=%u, internal=%u, internal_min=%u, largest_internal=%u, psram=%u\n",
+                  tag,
+                  (unsigned)ESP.getFreeHeap(),
+                  (unsigned)ESP.getMinFreeHeap(),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+}
+
+static const char* resetReasonToString(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_UNKNOWN: return "unknown";
+        case ESP_RST_POWERON: return "poweron";
+        case ESP_RST_EXT: return "external";
+        case ESP_RST_SW: return "software";
+        case ESP_RST_PANIC: return "panic";
+        case ESP_RST_INT_WDT: return "interrupt_wdt";
+        case ESP_RST_TASK_WDT: return "task_wdt";
+        case ESP_RST_WDT: return "other_wdt";
+        case ESP_RST_DEEPSLEEP: return "deepsleep";
+        case ESP_RST_BROWNOUT: return "brownout";
+        case ESP_RST_SDIO: return "sdio";
+        case ESP_RST_USB: return "usb";
+        case ESP_RST_JTAG: return "jtag";
+        case ESP_RST_EFUSE: return "efuse";
+        case ESP_RST_PWR_GLITCH: return "power_glitch";
+        case ESP_RST_CPU_LOCKUP: return "cpu_lockup";
+        default: return "unhandled";
+    }
+}
 
 // Forward declarations
 static void aiTask(void *arg); // AI task (OpenAI/Deepseek)
@@ -667,7 +722,7 @@ static void executeNextCommand(CommandSequence& sequence) {
     
     switch (cmd.type) {
     case ActionCommand::DUCKY_SCRIPT: {
-#ifdef USE_USB_KEYBOARD_ACTIONS
+#if USB_KEYBOARD_AVAILABLE
         Serial.printf("[DUCKY] Executing script: %d chars\n", cmd.script.length());
         Serial.printf("[DUCKY] Script:\n%s\n", cmd.script.c_str());
         ducky.executeScript(cmd.script.c_str());
@@ -786,18 +841,29 @@ static void onAudioStateChanged(RecordingState state) {
 static void wifiEnsureConnected() {
     if (WiFi.status() == WL_CONNECTED) return;
 
+    Serial.println("[WiFi] Starting safe WiFi bring-up...");
+    logHeapStatus("before wifi begin");
+
     WiFi.persistent(false);
+    Serial.println("[WiFi] persistent(false) done");
+
+    logHeapStatus("before mode sta");
     WiFi.mode(WIFI_STA);
+    Serial.println("[WiFi] mode(WIFI_STA) done");
+
+    logHeapStatus("after mode sta");
+
     WiFi.setAutoReconnect(true);
+    Serial.println("[WiFi] setAutoReconnect(true) done");
+
     WiFi.setSleep(false);
-    esp_wifi_set_ps(WIFI_PS_NONE);
-    
-    // Country/protocol optimization
-    wifi_country_t country = {"ES", 1, 13, WIFI_COUNTRY_POLICY_AUTO};
-    esp_wifi_set_country(&country);
-    esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+    Serial.println("[WiFi] setSleep(false) done");
+
     WiFi.setHostname("BasicGPT");
+    Serial.println("[WiFi] setHostname(BasicGPT) done");
+
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    Serial.println("[WiFi] setTxPower(8.5dBm) done");
 
     int currentMode = WiFi.getMode();
     Serial.printf("[WiFi] current mode=%d\n", currentMode);
@@ -815,17 +881,13 @@ static void wifiEnsureConnected() {
         }
         
         Serial.println("[WiFi] Connection timeout, resetting...");
-        
-        // use API only if STA was started
-        if (WiFi.getMode() == WIFI_MODE_STA || WiFi.getMode() == WIFI_MODE_APSTA) {
-            esp_wifi_disconnect();
-            esp_wifi_stop();
-            delay(250);
-            esp_wifi_start();
-            delay(500U << (attempt - 1));
-        } else {
-            Serial.println("[WiFi] skip esp_wifi reset because STA not active");
-        }
+
+        WiFi.disconnect(true, false);
+        delay(250);
+        WiFi.mode(WIFI_OFF);
+        delay(250);
+        WiFi.mode(WIFI_STA);
+        delay(500U << (attempt - 1));
     }
     
     Serial.println("[WiFi] Connection failed after all attempts");
@@ -1014,13 +1076,20 @@ static void aiTask(void *arg) {
 
 void setup() {
     Serial.begin(115200);  // UART0
+    delay(100);
 
     Serial.println("CuteAssistant starting...");
+    esp_reset_reason_t resetReason = esp_reset_reason();
+    Serial.printf("[Boot] Reset reason: %s (%d)\n", resetReasonToString(resetReason), (int)resetReason);
+    Serial.printf("[Boot] USB keyboard available: %s\n", USB_KEYBOARD_AVAILABLE ? "yes" : "no");
+    logHeapStatus("after boot");
 
-#ifdef USE_USB_KEYBOARD_ACTIONS
+#if USB_KEYBOARD_AVAILABLE
     ducky.begin();
     delay(100);
     Serial.println("[DUCKY] DuckyScript keyboard initialized (default: macOS)");
+#elif defined(USE_USB_KEYBOARD_ACTIONS)
+    Serial.println("[DUCKY] USE_USB_KEYBOARD_ACTIONS is enabled, but this build does not support native USB HID; skipping keyboard init");
 #endif
 
     // Initialize I2C bus FIRST (shared by display, touch, PMIC)
@@ -1049,55 +1118,7 @@ void setup() {
     updateDisplayNow();
     delay(100); // Brief pause to ensure rendering
 
-    // Initialize LED manager
-    LEDConfig ledConfig;
-    ledConfig.pin = NEO_PIXEL_PIN;
-    ledConfig.count = NEO_PIXEL_COUNT;
-    ledConfig.brightness = 51; // 20% brightness
-    
-    if (!ledManager.init(ledConfig)) {
-        Serial.println("Warning: LED manager initialization failed - continuing without LEDs");
-        uiManager.postStatus("Starting...");
-    } else {
-        uiManager.postStatus("Starting...");
-        ledManager.setState(LEDState::Processing); // Blue while system boots/connects
-    }
-
-    // Initialize audio manager
-    updateDisplayNow();
-    delay(50);
-    
-    AudioConfig audioConfig;
-    audioConfig.sampleRate = RECORDING_SAMPLE_RATE;
-    audioConfig.bitsPerSample = 16;
-    audioConfig.numChannels = 1;
-    audioConfig.maxRecordingMs = 30000; // 30 seconds max, but user can release earlier
-    audioConfig.sckPin = MIC_I2S_SCK;
-    audioConfig.wsPin = MIC_I2S_WS;
-    audioConfig.doutPin = SPK_I2S_DOUT;
-    audioConfig.dinPin = MIC_I2S_DIN;
-    audioConfig.speakerEnableExpanderPin = EXPANDER_SPK_SHUTDOWN;
-    audioConfig.speakerEnableExpanderAddr = IOEXP_I2C_ADDR;
-    
-    audioManager.setStateCallback(onAudioStateChanged);
-    audioManager.setChunkCallback(onAudioChunkReady);
-    if (!audioManager.init(audioConfig)) {
-        Serial.println("Error: Audio manager initialization failed");
-        uiManager.postStatus("Audio initialization failed");
-        uiManager.postStateChange(UIState::Error);
-        while (1) delay(1000);
-    }
-
-    // Create LED request queue
-    g_led_queue = xQueueCreate(8, sizeof(uint8_t));
-    
-    // Create audio chunk streaming queue
-    g_audio_chunk_queue = xQueueCreate(MAX_AUDIO_CHUNKS, sizeof(AudioChunk));
-    if (!g_audio_chunk_queue) {
-        Serial.println("[Setup] Error: Failed to create audio chunk queue");
-    } else {
-        Serial.println("[Setup] Audio streaming queue created successfully");
-    }
+    uiManager.postStatus("Starting...");
 
     // Initialize top button (GPIO 0) as input with pull-up
     pinMode(BUTTON_TOP, INPUT_PULLUP);
@@ -1145,6 +1166,8 @@ void setup() {
     }
     
     // Connect to WiFi
+    Serial.println("[Setup] Entering wifiEnsureConnected()");
+    logHeapStatus("before setup wifiEnsureConnected");
     updateDisplayNow();
     delay(100);
     
@@ -1164,6 +1187,54 @@ void setup() {
     } else if (g_preferredService == AI_DEEPSEEK && DEEPSEEK_API_KEY_STR.length() == 0) {
         Serial.println("[API] Warning: No Deepseek key found, queries will fail");
         uiManager.postStatus("No API key");
+    }
+
+    // Initialize LED manager after WiFi bring-up to avoid stacking power spikes.
+    LEDConfig ledConfig;
+    ledConfig.pin = NEO_PIXEL_PIN;
+    ledConfig.count = NEO_PIXEL_COUNT;
+    ledConfig.brightness = 51; // 20% brightness
+
+    if (!ledManager.init(ledConfig)) {
+        Serial.println("Warning: LED manager initialization failed - continuing without LEDs");
+    } else if (WiFi.status() == WL_CONNECTED) {
+        ledManager.setState(LEDState::Off);
+    }
+
+    // Initialize audio manager after WiFi bring-up to keep startup load low during radio init.
+    updateDisplayNow();
+    delay(50);
+
+    AudioConfig audioConfig;
+    audioConfig.sampleRate = RECORDING_SAMPLE_RATE;
+    audioConfig.bitsPerSample = 16;
+    audioConfig.numChannels = 1;
+    audioConfig.maxRecordingMs = 30000; // 30 seconds max, but user can release earlier
+    audioConfig.sckPin = MIC_I2S_SCK;
+    audioConfig.wsPin = MIC_I2S_WS;
+    audioConfig.doutPin = SPK_I2S_DOUT;
+    audioConfig.dinPin = MIC_I2S_DIN;
+    audioConfig.speakerEnableExpanderPin = EXPANDER_SPK_SHUTDOWN;
+    audioConfig.speakerEnableExpanderAddr = IOEXP_I2C_ADDR;
+
+    audioManager.setStateCallback(onAudioStateChanged);
+    audioManager.setChunkCallback(onAudioChunkReady);
+    if (!audioManager.init(audioConfig)) {
+        Serial.println("Error: Audio manager initialization failed");
+        uiManager.postStatus("Audio initialization failed");
+        uiManager.postStateChange(UIState::Error);
+        while (1) delay(1000);
+    }
+
+    // Create LED request queue
+    g_led_queue = xQueueCreate(8, sizeof(uint8_t));
+
+    // Create audio chunk streaming queue
+    g_audio_chunk_queue = xQueueCreate(MAX_AUDIO_CHUNKS, sizeof(AudioChunk));
+    if (!g_audio_chunk_queue) {
+        Serial.println("[Setup] Error: Failed to create audio chunk queue");
+    } else {
+        Serial.println("[Setup] Audio streaming queue created successfully");
     }
 }
 

@@ -1,8 +1,9 @@
 Import("env")
 import os
 
-# Patch NeoPixelBus header to ensure gpio_hal_iomux_func_sel is declared for ESP32-S3 builds.
-# This is required because some ESP-IDF versions omit the prototype when compiling as C++.
+# Patch NeoPixelBus for ESP32-S3 builds using newer Arduino-ESP32 frameworks.
+# Recent frameworks expose esp_rom_gpio_pad_select_gpio() rather than
+# gpio_hal_iomux_func_sel(), so replace the incompatible call in the vendored header.
 def patch_neopixel(*args, **kwargs):
     pio_env = env['PIOENV']
     project_dir = env['PROJECT_DIR']
@@ -13,25 +14,19 @@ def patch_neopixel(*args, **kwargs):
         return
     with open(hdr_path, 'r+', encoding='utf-8') as f:
         text = f.read()
-        # if we already injected the declaration, do nothing
-        if 'gpio_hal_iomux_func_sel' in text and 'forward declaration' in text:
+        old_line = '        gpio_hal_iomux_func_sel(GPIO_PIN_MUX_REG[pin], PIN_FUNC_GPIO);'
+        new_line = '        esp_rom_gpio_pad_select_gpio(pin); // patched by patch_neopixel.py'
+        if new_line in text:
             return
-        # insert forward declaration after the gpio_hal include
-        new_snippet = ('#include <hal/gpio_hal.h>\n'
-                       '\n'
-                       '// forward declaration inserted by patch_neopixel.py\n'
-                       '#ifdef __cplusplus\n'
-                       'extern "C" {\n'
-                       '#endif\n'
-                       'void gpio_hal_iomux_func_sel(uint32_t reg, uint32_t func);\n'
-                       '#ifdef __cplusplus\n'
-                       '}\n'
-                       '#endif')
-        new_text = text.replace('#include <hal/gpio_hal.h>', new_snippet)
+        if old_line not in text:
+            print("[patch_neopixel] target line not found, skipping")
+            return
+        new_text = text.replace(old_line, new_line)
         f.seek(0)
         f.write(new_text)
         f.truncate()
-        print("[patch_neopixel] applied forward declaration patch")
+        print("[patch_neopixel] replaced gpio_hal_iomux_func_sel with esp_rom_gpio_pad_select_gpio")
 
-# Hook into build process early
+# Apply immediately when the script is loaded, and also before builds as a safeguard.
+patch_neopixel()
 env.AddPreAction("build", patch_neopixel)

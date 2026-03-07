@@ -136,12 +136,16 @@ bool DisplayManager::init() {
         }
     }
 
-    // Try double buffering in PSRAM if there is room
+    // Double buffering is optional; keeping it off preserves memory for WiFi/radio init.
+#if LCD_DRAW_BUFF_DOUBLE
     buf2 = (lv_color_t*)heap_caps_malloc(draw_buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf2) {
         // If not enough memory, keep single buffer
         buf2 = NULL;
     }
+#else
+    buf2 = NULL;
+#endif
 
     // Create LVGL display and configure rendering
     display = lv_display_create(LCD_WIDTH, LCD_HEIGHT);

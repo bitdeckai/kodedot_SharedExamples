@@ -25,9 +25,9 @@
 #define LCD_PARAM_BITS        8
 #define LCD_COLOR_SPACE       ESP_LCD_COLOR_SPACE_RGB
 #define LCD_BITS_PER_PIXEL    16
-#define LCD_DRAW_BUFF_DOUBLE  1
-// Use full-height buffer (PSRAM available)
-#define LCD_DRAW_BUFF_HEIGHT  LCD_HEIGHT
+#define LCD_DRAW_BUFF_DOUBLE  0
+// Keep the LVGL draw window modest so WiFi init still has room for internal heap.
+#define LCD_DRAW_BUFF_HEIGHT  80
 
 // LCD pins (QSPI)
 #define LCD_SCLK              17
