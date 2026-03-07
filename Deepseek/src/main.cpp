@@ -1144,6 +1144,9 @@ void setup() {
             Serial.println("[Setup] No AI API key available; AI queries will fail");
         }
     }
+
+    // Switch top-right logo based on selected service.
+    uiManager.setServiceLogo(g_preferredService == AI_DEEPSEEK);
     
     // Connect to WiFi
     Serial.println("[Setup] Entering wifiEnsureConnected()");
@@ -1196,6 +1199,7 @@ void setup() {
     audioConfig.dinPin = MIC_I2S_DIN;
     audioConfig.speakerEnableExpanderPin = EXPANDER_SPK_SHUTDOWN;
     audioConfig.speakerEnableExpanderAddr = IOEXP_I2C_ADDR;
+    audioConfig.keepSpeakerEnabled = true;
 
     audioManager.setStateCallback(onAudioStateChanged);
     audioManager.setChunkCallback(onAudioChunkReady);

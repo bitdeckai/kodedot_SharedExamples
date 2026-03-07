@@ -46,6 +46,9 @@ public:
     
     // Typewriter animation control
     void setTypewriterSpeed(uint32_t delayMs); // Set delay between characters
+
+    // Service logo switch: false = OpenAI style, true = DeepSeek style.
+    void setServiceLogo(bool useDeepseek);
     
     // Bottom USB connection status
     void setUSBConnectionStatus(bool connected);
@@ -87,6 +90,7 @@ private:
     // GPT logo animation
     lv_timer_t* gptLogoTimer_;
     bool gptLogoToggle_;
+    bool useDeepseekLogo_;
     
     // Styles
     lv_style_t styleScreenBg_;

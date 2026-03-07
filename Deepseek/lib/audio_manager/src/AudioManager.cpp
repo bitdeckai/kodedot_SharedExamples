@@ -26,7 +26,9 @@ AudioManager::~AudioManager() {
     if (captureTask_) {
         vTaskDelete(captureTask_);
     }
-    setSpeakerEnabled(false);
+    if (!config_.keepSpeakerEnabled) {
+        setSpeakerEnabled(false);
+    }
     if (speakerExpander_) {
         delete speakerExpander_;
         speakerExpander_ = nullptr;
@@ -39,6 +41,11 @@ bool AudioManager::init(const AudioConfig& config) {
 
     if (!initSpeakerExpander()) {
         Serial.println("[AudioManager] Speaker expander init failed");
+    }
+
+    if (config_.keepSpeakerEnabled && speakerExpanderReady_) {
+        setSpeakerEnabled(true);
+        Serial.println("[AudioManager] Speaker kept enabled to minimize runtime I2C operations");
     }
 
     if (!configureInputI2S()) {
@@ -291,8 +298,10 @@ bool AudioManager::playPCM16(const uint8_t* data, size_t len) {
         return false;
     }
 
-    setSpeakerEnabled(true);
-    if (config_.speakerPowerupDelayMs > 0) {
+    if (!config_.keepSpeakerEnabled) {
+        setSpeakerEnabled(true);
+    }
+    if (!config_.keepSpeakerEnabled && config_.speakerPowerupDelayMs > 0) {
         delay(config_.speakerPowerupDelayMs);
     }
 
@@ -313,7 +322,9 @@ bool AudioManager::playPCM16(const uint8_t* data, size_t len) {
     if (config_.playbackTailMs > 0) {
         delay(config_.playbackTailMs);
     }
-    setSpeakerEnabled(false);
+    if (!config_.keepSpeakerEnabled) {
+        setSpeakerEnabled(false);
+    }
 
     if (!configureInputI2S()) {
         Serial.println("[AudioManager] WARNING: Failed to restore I2S RX mode after playback");

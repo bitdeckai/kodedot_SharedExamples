@@ -3,6 +3,11 @@
 
 namespace {
 
+constexpr lv_coord_t kLogoAlignX = -20;
+constexpr lv_coord_t kLogoAlignY = 20;
+constexpr lv_coord_t kDeepSeekBaseOffsetY = 12;
+constexpr lv_coord_t kDeepSeekBounceDeltaY = -3;
+
 size_t utf8CharLength(uint8_t leadByte) {
     if ((leadByte & 0x80U) == 0) {
         return 1;
@@ -109,8 +114,30 @@ size_t utf8CodePointCount(const String& text) {
 extern "C" {
     extern const lv_image_dsc_t GPT_basic;
     extern const lv_image_dsc_t GPT_basic_turn;
+    extern const lv_image_dsc_t DEEPSEEK_basic;
     extern const lv_image_dsc_t Start;
     extern const lv_image_dsc_t Listen;
+}
+
+static const lv_image_dsc_t* getLogoBase(bool useDeepseek) {
+    return useDeepseek ? &DEEPSEEK_basic : &GPT_basic;
+}
+
+static const lv_image_dsc_t* getLogoTurn(bool useDeepseek) {
+    // DeepSeek currently uses one provided asset; keep static frame during animation.
+    return useDeepseek ? &DEEPSEEK_basic : &GPT_basic_turn;
+}
+
+static void alignLogoForState(lv_obj_t* logo, bool useDeepseek, bool bounced) {
+    if (!logo) return;
+    lv_coord_t y = kLogoAlignY;
+    if (useDeepseek) {
+        y += kDeepSeekBaseOffsetY;
+    }
+    if (useDeepseek && bounced) {
+        y += kDeepSeekBounceDeltaY;
+    }
+    lv_obj_align(logo, LV_ALIGN_TOP_RIGHT, kLogoAlignX, y);
 }
 
 // Static color definitions
@@ -175,7 +202,8 @@ UIManager::UIManager()
     , nextThinkingBlinkTime_(0)
     , lastTouchState_(false)
     , gptLogoTimer_(nullptr)
-    , gptLogoToggle_(false) {
+    , gptLogoToggle_(false)
+    , useDeepseekLogo_(false) {
 }
 
 UIManager::~UIManager() {
@@ -461,9 +489,26 @@ void UIManager::createGPTLogo() {
         gptLogo_ = lv_image_create(scr);
     }
     if (!gptLogo_) return;
-    lv_image_set_src(gptLogo_, &GPT_basic);
-    // 20px from top and right margins
-    lv_obj_align(gptLogo_, LV_ALIGN_TOP_RIGHT, -20, 20);
+    lv_image_set_src(gptLogo_, getLogoBase(useDeepseekLogo_));
+    // Keep a consistent anchor and apply DeepSeek bounce offset only while animating.
+    alignLogoForState(gptLogo_, useDeepseekLogo_, false);
+}
+
+void UIManager::setServiceLogo(bool useDeepseek) {
+    useDeepseekLogo_ = useDeepseek;
+    if (!gptLogo_) return;
+    if (gptLogoTimer_) {
+        if (useDeepseekLogo_) {
+            lv_image_set_src(gptLogo_, getLogoBase(useDeepseekLogo_));
+            alignLogoForState(gptLogo_, useDeepseekLogo_, gptLogoToggle_);
+        } else {
+            lv_image_set_src(gptLogo_, gptLogoToggle_ ? getLogoTurn(useDeepseekLogo_) : getLogoBase(useDeepseekLogo_));
+            alignLogoForState(gptLogo_, useDeepseekLogo_, false);
+        }
+    } else {
+        lv_image_set_src(gptLogo_, getLogoBase(useDeepseekLogo_));
+        alignLogoForState(gptLogo_, useDeepseekLogo_, false);
+    }
 }
 
 void UIManager::setGPTLogoVisible(bool show) {
@@ -483,7 +528,15 @@ void UIManager::startGPTLogoAnimation(uint32_t periodMs) {
         auto* ui = static_cast<UIManager*>(lv_timer_get_user_data(t));
         if (!ui || !ui->gptLogo_) return;
         ui->gptLogoToggle_ = !ui->gptLogoToggle_;
-        lv_image_set_src(ui->gptLogo_, ui->gptLogoToggle_ ? &GPT_basic_turn : &GPT_basic);
+        if (ui->useDeepseekLogo_) {
+            // DeepSeek animation: keep logo source, only bounce vertically.
+            lv_image_set_src(ui->gptLogo_, getLogoBase(ui->useDeepseekLogo_));
+            alignLogoForState(ui->gptLogo_, ui->useDeepseekLogo_, ui->gptLogoToggle_);
+        } else {
+            // OpenAI animation: swap static and turn frames.
+            lv_image_set_src(ui->gptLogo_, ui->gptLogoToggle_ ? getLogoTurn(ui->useDeepseekLogo_) : getLogoBase(ui->useDeepseekLogo_));
+            alignLogoForState(ui->gptLogo_, ui->useDeepseekLogo_, false);
+        }
     }, periodMs, this);
 }
 
@@ -492,7 +545,10 @@ void UIManager::stopGPTLogoAnimation() {
         lv_timer_del(gptLogoTimer_);
         gptLogoTimer_ = nullptr;
     }
-    if (gptLogo_) lv_image_set_src(gptLogo_, &GPT_basic);
+    if (gptLogo_) {
+        lv_image_set_src(gptLogo_, getLogoBase(useDeepseekLogo_));
+        alignLogoForState(gptLogo_, useDeepseekLogo_, false);
+    }
 }
 
 void UIManager::processMessages() {

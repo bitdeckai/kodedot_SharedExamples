@@ -30,6 +30,8 @@ struct AudioConfig {
     int8_t dinPin = -1;
     int8_t speakerEnableExpanderPin = -1;
     uint8_t speakerEnableExpanderAddr = 0x20;
+    // Keep amp enabled after init to avoid frequent I2C toggles during playback.
+    bool keepSpeakerEnabled = true;
 };
 
 typedef std::function<void(RecordingState)> StateCallback;
