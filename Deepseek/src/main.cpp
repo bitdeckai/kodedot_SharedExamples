@@ -68,13 +68,23 @@ static OSType current_os = OS_MAC; // Default to macOS
 static const uint32_t GUI_LOOP_DELAY_MS = 5;
 static const uint32_t WIFI_CHECK_INTERVAL_MS = 15000;
 static const uint32_t TOUCH_DEBOUNCE_MS = 200;    // Prevent rapid touches
-static const bool PMIC_ENABLE_OTG_ON_BOOT = false;
+static const uint32_t PMIC_WD_KICK_INTERVAL_MS = 10000;
+static const uint32_t PMIC_MODE_LOG_INTERVAL_MS = 3000;
+static const uint32_t PMIC_OTG_POLICY_INTERVAL_MS = 1000;
+static const uint32_t PMIC_OTG_USB_PROBE_INTERVAL_MS = 5000;
+static const uint32_t PMIC_OTG_USB_PROBE_OFF_MS = 30;
+static const bool PMIC_ENABLE_OTG_ON_BOOT = true;
+static const bool PMIC_ALLOW_OTG_WITH_USB = false;
+
+static void logPmicChargeModeIfChanged(bool force = false);
+static void enforcePmicOtgPolicy();
 
 // Available GPIO pins for user control (from pinout diagram)
 static const int AVAILABLE_GPIOS[] = {1, 2, 3, 11, 12, 13, 39, 40, 41, 42};
 static const int NUM_AVAILABLE_GPIOS = sizeof(AVAILABLE_GPIOS) / sizeof(AVAILABLE_GPIOS[0]);
 
 // ==================== PMIC BQ25896 - 5V BUS CONTROL ====================
+#if 0
 static void initPMIC() {
     Serial.println("[PMIC] Inicializando BQ25896 para habilitar bus 5V...");
     
@@ -87,21 +97,28 @@ static void initPMIC() {
     pmic.setCONV_RATE(true);
     delay(50);
 
+    
     auto vstat = pmic.get_VBUS_STAT_reg();
     bool haveUsb = vstat.pg_stat;
     Serial.printf("[PMIC] Estado inicial VBUS: USB=%s, carga=%d\n", haveUsb ? "conectado" : "no conectado", vstat.chrg_stat);
+    
+    #if 0
+        if (!PMIC_ENABLE_OTG_ON_BOOT) {
+            pmic.setOTG_CONFIG(false);
+            Serial.println("[PMIC] OTG/Boost deshabilitado en arranque para evitar reinicios durante USB debug");
+            return;
+        }
 
-    if (!PMIC_ENABLE_OTG_ON_BOOT) {
-        pmic.setOTG_CONFIG(false);
-        Serial.println("[PMIC] OTG/Boost deshabilitado en arranque para evitar reinicios durante USB debug");
-        return;
-    }
+        if (haveUsb && !PMIC_ALLOW_OTG_WITH_USB) {
+            pmic.setOTG_CONFIG(false);
+            Serial.println("[PMIC] USB/VBUS detectado; se omite OTG/Boost para no interferir con la conexion USB");
+            return;
+        }
 
-    if (haveUsb) {
-        pmic.setOTG_CONFIG(false);
-        Serial.println("[PMIC] USB/VBUS detectado; se omite OTG/Boost para no interferir con la conexion USB");
-        return;
-    }
+        if (haveUsb && PMIC_ALLOW_OTG_WITH_USB) {
+            Serial.println("[PMIC] USB/VBUS detectado, pero se forzara OTG/Boost por configuracion");
+        }
+    #endif
     
     // CONFIGURAR BOOST VOLTAGE (5V típico)
     // El registro BOOSTV controla el voltaje de salida del boost
@@ -120,6 +137,114 @@ static void initPMIC() {
     Serial.printf("[PMIC] USB=%s, Estado carga=%d\n", haveUsb ? "conectado" : "no conectado", vstat.chrg_stat);
     Serial.println("[PMIC] ✅ Bus de 5V HABILITADO - Modo OTG/Boost activado");
 }
+#else
+static void initPMIC() {
+    /* Initialize the BQ25896 over I²C */
+  pmic.begin();
+  delay(500);  /* Allow device to power up */
+
+  /* Check device connectivity */
+  if (!pmic.isConnected()) {
+    Serial.println("BQ25896 not found! Check connection and power");
+    while (1) {
+      /* Halt execution if device is not found */
+    }
+  } else {
+    Serial.println("BQ25896 found successfully.");
+  }
+
+  // Habilitar conversión continua de ADC (1 Hz) para refrescar medidas
+    pmic.setCONV_RATE(true);
+    delay(50);
+
+    pmic.setWATCHDOG(0);    // 关I2C watchdog，防寄存器回退
+    delay(50);
+
+    pmic.setWD_RST(true);   // 复位一次计时
+    delay(50);
+
+    pmic.setBOOSTV(4998);   // ~5V target on VBUS
+    delay(50);
+
+    // CONFIGURAR BOOST VOLTAGE (5V típico)
+    // El registro BOOSTV controla el voltaje de salida del boost
+    // Use a moderate OTG current limit and disable PFM in boost mode to reduce
+    // switching ripple that can cause display color glitches.
+    pmic.setBOOST_LIM(3);   // 1400mA
+    pmic.setPFM_OTG_DIS(true);
+    delay(50);
+
+    auto vstat = pmic.get_VBUS_STAT_reg();
+    const bool haveUsb = (vstat.pg_stat == 1) && (vstat.vbus_stat != 0) && (vstat.vbus_stat != 7);
+
+    const bool shouldEnableOtg = PMIC_ENABLE_OTG_ON_BOOT && (!haveUsb || PMIC_ALLOW_OTG_WITH_USB);
+    if (shouldEnableOtg) {
+        Serial.println("[PMIC] Enabling OTG/Boost for 5V bus output...");
+        pmic.setOTG_CONFIG(true);
+    } else {
+        pmic.setOTG_CONFIG(false);
+        if (haveUsb) {
+            Serial.println("[PMIC] USB input present; OTG/Boost kept disabled for charging");
+        } else {
+            Serial.println("[PMIC] OTG/Boost disabled by boot policy");
+        }
+    }
+    delay(100);
+
+    vstat = pmic.get_VBUS_STAT_reg();
+    Serial.printf("[PMIC] USB=%s, VBUS_STAT=%d, CHG_STAT=%d\n",
+                  (vstat.pg_stat ? "connected" : "not_connected"),
+                  (int)vstat.vbus_stat,
+                  (int)vstat.chrg_stat);
+
+  Serial.println("BQ25896 System Parameters");
+
+  /* Input current limit pin status */
+  Serial.print("ILIM PIN : ");
+  Serial.println(String(pmic.getILIM_reg().en_ilim));
+
+  /* System and charging parameters */
+  Serial.print("IINLIM       : "); Serial.println(String(pmic.getIINLIM()) + " mA");
+  Serial.print("VINDPM_OS    : "); Serial.println(String(pmic.getVINDPM_OS()) + " mV");
+  Serial.print("SYS_MIN      : "); Serial.println(String(pmic.getSYS_MIN()) + " mV");
+  Serial.print("ICHG         : "); Serial.println(String(pmic.getICHG()) + " mA");
+  Serial.print("IPRE         : "); Serial.println(String(pmic.getIPRECHG()) + " mA");
+  Serial.print("ITERM        : "); Serial.println(String(pmic.getITERM()) + " mA");
+  Serial.print("VREG         : "); Serial.println(String(pmic.getVREG()) + " mV");
+  Serial.print("BAT_COMP     : "); Serial.println(String(pmic.getBAT_COMP()) + " mΩ");
+  Serial.print("VCLAMP       : "); Serial.println(String(pmic.getVCLAMP()) + " mV");
+  Serial.print("BOOSTV       : "); Serial.println(String(pmic.getBOOSTV()) + " mV");
+  Serial.print("BOOST_LIM    : "); Serial.println(String(pmic.getBOOST_LIM()) + " mA");
+  Serial.print("VINDPM       : "); Serial.println(String(pmic.getVINDPM()) + " mV");
+  Serial.print("BATV         : "); Serial.println(String(pmic.getBATV()) + " mV");
+  Serial.print("SYSV         : "); Serial.println(String(pmic.getSYSV()) + " mV");
+  Serial.print("TSPCT        : "); Serial.println(String(pmic.getTSPCT()) + "%");
+  Serial.print("VBUSV        : "); Serial.println(String(pmic.getVBUSV()) + " mV");
+  Serial.print("ICHGR        : "); Serial.println(String(pmic.getICHGR()) + " mA");
+
+  /* Fault status */
+  Serial.print("Fault -> "); 
+  Serial.print("NTC:" + String(pmic.getFAULT_reg().ntc_fault));
+  Serial.print(" ,BAT:" + String(pmic.getFAULT_reg().bat_fault));
+  Serial.print(" ,CHGR:" + String(pmic.getFAULT_reg().chrg_fault));
+  Serial.print(" ,BOOST:" + String(pmic.getFAULT_reg().boost_fault));
+  Serial.println(" ,WATCHDOG:" + String(pmic.getFAULT_reg().watchdog_fault));
+
+  /* Charging status */
+  Serial.print("Charging Status -> "); 
+  Serial.print("CHG_EN:" + String(pmic.getSYS_CTRL_reg().chg_config));
+  Serial.print(" ,BATFET DIS:" + String(pmic.getCTRL1_reg().batfet_dis));
+  Serial.print(" ,BATLOAD_EN:" + String(pmic.getSYS_CTRL_reg().bat_loaden));
+  Serial.print(" ,PG STAT:" + String(pmic.get_VBUS_STAT_reg().pg_stat));
+  Serial.print(" ,VBUS STAT:" + String(pmic.get_VBUS_STAT_reg().vbus_stat));
+  Serial.print(" ,CHRG STAT:" + String(pmic.get_VBUS_STAT_reg().chrg_stat));
+  Serial.println(",VSYS STAT:" + String(pmic.get_VBUS_STAT_reg().vsys_stat));
+
+    logPmicChargeModeIfChanged(true);
+
+
+}
+#endif
 
 // Servo management (max 10 servos)
 #define CUTEASSISTANT_MAX_SERVOS 10
@@ -250,6 +375,126 @@ static const char* resetReasonToString(esp_reset_reason_t reason) {
         case ESP_RST_PWR_GLITCH: return "power_glitch";
         case ESP_RST_CPU_LOCKUP: return "cpu_lockup";
         default: return "unhandled";
+    }
+}
+
+static const char* chargeStateToText(int chrgStat) {
+    switch (chrgStat) {
+        case 0: return "not_charging";
+        case 1: return "pre_charge";
+        case 2: return "fast_charge";
+        case 3: return "charge_done";
+        default: return "unknown";
+    }
+}
+
+static void logPmicChargeModeIfChanged(bool force) {
+    static uint32_t lastLogMs = 0;
+
+    const uint32_t nowMs = millis();
+    if (!force && (nowMs - lastLogMs < PMIC_MODE_LOG_INTERVAL_MS)) {
+        return;
+    }
+
+    const auto vbus = pmic.get_VBUS_STAT_reg();
+    const auto sys = pmic.getSYS_CTRL_reg();
+    const auto fault = pmic.getFAULT_reg();
+    const int ichgrMa = pmic.getICHGR();
+
+    const bool otgMode = (vbus.vbus_stat == 7);
+    const bool powerInputPresent = (vbus.pg_stat == 1) && !otgMode && (vbus.vbus_stat != 0);
+    const bool chargeEnabled = (sys.chg_config == 1);
+    const bool chargingState = (vbus.chrg_stat == 1 || vbus.chrg_stat == 2);
+    const bool chargingNow = chargingState;
+    const bool lowOrPulsedChargeCurrent = chargingState && (ichgrMa == 0);
+    const bool chargeDone = (vbus.chrg_stat == 3);
+    const bool faultActive = (fault.ntc_fault != 0 || fault.bat_fault != 0 || fault.chrg_fault != 0 || fault.boost_fault != 0);
+
+    const char* mode = "unknown";
+    if (otgMode) {
+        mode = "OTG_boost";
+    } else if (powerInputPresent && chargeEnabled && chargingNow) {
+        mode = "charging";
+    } else if (powerInputPresent && chargeEnabled && chargeDone) {
+        mode = "charge_done";
+    } else if (powerInputPresent && !chargeEnabled) {
+        mode = "input_present_charge_disabled";
+    } else if (powerInputPresent) {
+        mode = "input_present_not_charging";
+    } else {
+        mode = "battery_only";
+    }
+
+    String line;
+    line.reserve(220);
+    line += "[PMIC][MODE] mode=";
+    line += mode;
+    line += " | CHG_EN=";
+    line += (chargeEnabled ? "1" : "0");
+    line += " OTG=";
+    line += (otgMode ? "1" : "0");
+    line += " PG=";
+    line += String((int)vbus.pg_stat);
+    line += " VBUS_STAT=";
+    line += String((int)vbus.vbus_stat);
+    line += " CHRG_STAT=";
+    line += chargeStateToText((int)vbus.chrg_stat);
+    line += " ICHGR=";
+    line += String(ichgrMa);
+    line += "mA";
+    if (lowOrPulsedChargeCurrent) {
+        line += " (low_or_pulsed)";
+    }
+    if (faultActive) {
+        line += " FAULT(ntc/bat/chg/boost)=";
+        line += String((int)fault.ntc_fault);
+        line += "/";
+        line += String((int)fault.bat_fault);
+        line += "/";
+        line += String((int)fault.chrg_fault);
+        line += "/";
+        line += String((int)fault.boost_fault);
+    }
+
+    Serial.println(line);
+    lastLogMs = nowMs;
+}
+
+static void enforcePmicOtgPolicy() {
+    static uint32_t lastPolicyMs = 0;
+    static uint32_t lastProbeMs = 0;
+    const uint32_t nowMs = millis();
+    if (nowMs - lastPolicyMs < PMIC_OTG_POLICY_INTERVAL_MS) {
+        return;
+    }
+    lastPolicyMs = nowMs;
+
+    auto vbus = pmic.get_VBUS_STAT_reg();
+    bool haveUsb = (vbus.pg_stat == 1) && (vbus.vbus_stat != 0) && (vbus.vbus_stat != 7);
+    const bool otgNow = (vbus.vbus_stat == 7);
+
+    // In OTG mode, external input may be masked. Periodically turn OTG off briefly
+    // to probe whether real USB/VBUS is present, then keep OTG off if input exists.
+    if (!PMIC_ALLOW_OTG_WITH_USB && otgNow && (nowMs - lastProbeMs >= PMIC_OTG_USB_PROBE_INTERVAL_MS)) {
+        lastProbeMs = nowMs;
+        pmic.setOTG_CONFIG(false);
+        delay(PMIC_OTG_USB_PROBE_OFF_MS);
+        vbus = pmic.get_VBUS_STAT_reg();
+        haveUsb = (vbus.pg_stat == 1) && (vbus.vbus_stat != 0) && (vbus.vbus_stat != 7);
+        Serial.printf("[PMIC][PROBE] USB=%s after OTG off probe (VBUS_STAT=%d, PG=%d)\n",
+                      haveUsb ? "present" : "absent",
+                      (int)vbus.vbus_stat,
+                      (int)vbus.pg_stat);
+    }
+
+    const bool shouldEnableOtg = PMIC_ENABLE_OTG_ON_BOOT && (!haveUsb || PMIC_ALLOW_OTG_WITH_USB);
+
+    if (shouldEnableOtg != otgNow) {
+        pmic.setOTG_CONFIG(shouldEnableOtg);
+        Serial.printf("[PMIC][POLICY] OTG switched to %s (USB=%s, VBUS_STAT=%d)\n",
+                      shouldEnableOtg ? "ON" : "OFF",
+                      haveUsb ? "present" : "absent",
+                      (int)vbus.vbus_stat);
     }
 }
 
@@ -1223,11 +1468,21 @@ void setup() {
 }
 
 void loop() {
+    static uint32_t lastPmicWdKickMs = 0;
+
     // Update all managers
     display.update();
     uiManager.update();
     audioManager.service();
     ledDrainRequests();
+
+    // Keep PMIC watchdog serviced in long-running sessions.
+    if (millis() - lastPmicWdKickMs >= PMIC_WD_KICK_INTERVAL_MS) {
+        pmic.setWD_RST(true);
+        lastPmicWdKickMs = millis();
+    }
+    enforcePmicOtgPolicy();
+    logPmicChargeModeIfChanged(false);
     
     // Update GPIO command sequence state machine
     updateCommandSequence();
